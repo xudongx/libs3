@@ -53,6 +53,8 @@
 #define REQUEST_STACK_SIZE 32
 #define SIGNATURE_SCOPE_SIZE 64
 
+static const curl_off_t MAX_SEND_SIZE = 1024*1024*1024;
+
 //#define SIGNATURE_DEBUG
 
 static int verifyPeer;
@@ -204,12 +206,12 @@ static size_t curl_header_func(void *ptr, size_t size, size_t nmemb,
     return len;
 }
 
-
+//note - registed by curl_easy_setopt_safe(CURLOPT_READFUNCTION, &curl_read_func);
 static size_t curl_read_func(void *ptr, size_t size, size_t nmemb, void *data)
 {
     Request *request = (Request *) data;
 
-    int len = size * nmemb;
+    int len = size * nmemb;  //note - calculate bufferSize here
 
     // CURL may call this function before response headers are available,
     // so don't assume response headers are available and attempt to parse
@@ -233,7 +235,7 @@ static size_t curl_read_func(void *ptr, size_t size, size_t nmemb, void *data)
     }
 
     // Otherwise, make the data callback
-    int ret = (*(request->toS3Callback))
+    int ret = (*(request->toS3Callback))  //note - invoke putObjectDataCallback here
         (len, (char *) ptr, request->callbackData);
     if (ret < 0) {
         request->status = S3StatusAbortedByCallback;
@@ -1161,7 +1163,7 @@ static S3Status setup_curl(Request *request,
     }
 
     // Debugging only
-    // curl_easy_setopt_safe(CURLOPT_VERBOSE, 1);
+    curl_easy_setopt_safe(CURLOPT_VERBOSE, 1);
 
     // Set private data to request for the benefit of S3RequestContext
     curl_easy_setopt_safe(CURLOPT_PRIVATE, request);
@@ -1223,6 +1225,10 @@ static S3Status setup_curl(Request *request,
     curl_easy_setopt_safe(CURLOPT_LOW_SPEED_LIMIT, 1024);
     curl_easy_setopt_safe(CURLOPT_LOW_SPEED_TIME, 15);
 
+    // note - add this curl opt
+    // curl_easy_setopt_safe(CURLOPT_POSTFIELDSIZE_LARGE, MAX_SEND_SIZE);
+    curl_easy_setopt_safe(CURLOPT_INFILESIZE_LARGE, MAX_SEND_SIZE);
+
 
     if (params->timeoutMs > 0) {
         curl_easy_setopt_safe(CURLOPT_TIMEOUT_MS, params->timeoutMs);
@@ -1237,19 +1243,20 @@ static S3Status setup_curl(Request *request,
     }
 
     // Would use CURLOPT_INFILESIZE_LARGE, but it is buggy in libcurl
-    if ((params->httpRequestType == HttpRequestTypePUT) ||
-        (params->httpRequestType == HttpRequestTypePOST)) {
-        char header[256];
-        snprintf(header, sizeof(header), "Content-Length: %llu",
-                 (unsigned long long) params->toS3CallbackTotalSize);
-        request->headers = curl_slist_append(request->headers, header);
-        request->headers = curl_slist_append(request->headers,
-                                             "Transfer-Encoding:");
-    }
-    else if (params->httpRequestType == HttpRequestTypeCOPY) {
-        request->headers = curl_slist_append(request->headers,
-                                             "Transfer-Encoding:");
-    }
+    // note - 
+    // if ((params->httpRequestType == HttpRequestTypePUT) ||
+    //     (params->httpRequestType == HttpRequestTypePOST)) {
+    //     char header[256];
+    //     snprintf(header, sizeof(header), "Content-Length: %llu",
+    //              (unsigned long long) params->toS3CallbackTotalSize);
+    //     request->headers = curl_slist_append(request->headers, header);
+    //     request->headers = curl_slist_append(request->headers,
+    //                                          "Transfer-Encoding:");
+    // }
+    // else if (params->httpRequestType == HttpRequestTypeCOPY) {
+    //     request->headers = curl_slist_append(request->headers,
+    //                                          "Transfer-Encoding:");
+    // }
 
     append_standard_header(hostHeader);
     append_standard_header(cacheControlHeader);
